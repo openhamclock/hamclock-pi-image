@@ -94,7 +94,14 @@ jobs:
               VERSION_ARG="-t ${{ github.event.inputs.hamclock_version }}"
             fi
 
+            set +e
             /home/hamclock-build/debian/install-hc-rpi $VERSION_ARG
+            RC=$?
+            set -e
+            echo "----- install-hc-rpi.log -----"
+            cat /root/install-hc-rpi.log || true
+            echo "----- end log -----"
+            exit $RC
 
       - name: Rename and compress image
         run: |

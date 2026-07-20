@@ -210,7 +210,7 @@ x11-utils \
 xdg-utils \
 xserver-xorg\
 "
-sudo apt-get -y update >> $LOGFN 2>&1
+sudo apt-get -y -o Acquire::Check-Valid-Until=false update >> $LOGFN 2>&1
 sudo apt-get -y install $PKGS >> $LOGFN 2>&1
 if (( $? != 0 )) ; then echo error loading packages; exit 1; fi
 
