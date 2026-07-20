@@ -56,7 +56,7 @@ jobs:
             variant: web
             # Always resolves to the newest published arm64 Lite image.
             base_image: https://downloads.raspberrypi.org/raspios_lite_arm64_latest
-            force_webonly: 'y'
+            build_mode: web
             image_additional_mb: 2048
 
           - name: trixie-hardware
@@ -64,8 +64,16 @@ jobs:
             variant: hardware
             # Always resolves to the newest published arm64 Desktop image.
             base_image: https://downloads.raspberrypi.org/raspios_arm64_latest
-            force_webonly: 'n'
+            build_mode: hardware
             image_additional_mb: 3072
+
+          - name: trixie-fb0
+            codename: trixie
+            variant: fb0
+            # fb0 needs no desktop at all, same Lite image as web.
+            base_image: https://downloads.raspberrypi.org/raspios_lite_arm64_latest
+            build_mode: fb0
+            image_additional_mb: 2048
 
           # ----- Previous Raspberry Pi OS release (Bookworm) -----
           # Pinned to a specific dated build (Raspberry Pi doesn't publish a
@@ -77,15 +85,22 @@ jobs:
             codename: bookworm
             variant: web
             base_image: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
-            force_webonly: 'y'
+            build_mode: web
             image_additional_mb: 2048
 
           - name: bookworm-hardware
             codename: bookworm
             variant: hardware
             base_image: https://downloads.raspberrypi.com/raspios_arm64/images/raspios_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64.img.xz
-            force_webonly: 'n'
+            build_mode: hardware
             image_additional_mb: 3072
+
+          - name: bookworm-fb0
+            codename: bookworm
+            variant: fb0
+            base_image: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+            build_mode: fb0
+            image_additional_mb: 2048
 
     steps:
       - name: Checkout repository
@@ -110,7 +125,7 @@ jobs:
 
             export HC_NONINTERACTIVE=1
             export HC_ALLOW_SUDO=1
-            export HC_FORCE_WEBONLY="${{ matrix.force_webonly }}"
+            export HC_BUILD_MODE="${{ matrix.build_mode }}"
             export HC_SIZE="${{ github.event.inputs.hamclock_size || '800x480' }}"
             export HC_AUTOSTART="${{ github.event.inputs.autostart || 'y' }}"
 

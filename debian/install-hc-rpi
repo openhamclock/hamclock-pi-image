@@ -9,16 +9,30 @@
 #                            defaults below (or the per-question defaults
 #                            noted). When unset, the script behaves exactly
 #                            as it always has.
-#   HC_FORCE_WEBONLY=y|n    Whether the non-interactive build is web-only
-#                            (no hardware display). Default: y. Web-only is
-#                            required whenever there is no real or virtual
-#                            X11 display available (e.g. inside a CI chroot),
-#                            because that path never calls xdpyinfo.
+#   HC_BUILD_MODE=web|hardware|fb0
+#                            Which HamClock build to produce. Default: web
+#                            (or derived from HC_FORCE_WEBONLY below if set,
+#                            for backward compatibility). "hardware" needs a
+#                            live X11 display and is not buildable inside a
+#                            CI chroot without a real or virtual X server.
+#                            "fb0" draws directly to /dev/fb0 -- no X11, no
+#                            desktop environment, lightest-weight option for
+#                            a dedicated on-screen display.
+#   HC_FORCE_WEBONLY=y|n    Legacy alias: y -> HC_BUILD_MODE=web, n ->
+#                            HC_BUILD_MODE=hardware. Ignored if
+#                            HC_BUILD_MODE is set. Default: y.
 #   HC_SIZE=800x480|1600x960|2400x1440|3200x1920
-#                            Web-only build size. Default: 800x480.
+#                            Build size for web/fb0. Default: 800x480.
+#   HC_FB_DEPTH=16|32       Optional framebuffer color depth override,
+#                            passed as FB_DEPTH=<n> to make. Only used for
+#                            HC_BUILD_MODE=fb0. Leave unset to use the
+#                            Makefile's own default; set to 16 if HamClock
+#                            fails to set 32-bit color mode on your
+#                            hardware's framebuffer driver.
 #   HC_AUTOSTART=y|n        Start HamClock automatically on boot (desktop
-#                            autostart entry, or @reboot crontab entry for
-#                            web-only builds). Default: y.
+#                            autostart entry for hardware, @reboot crontab
+#                            entry for web, or a systemd service for fb0).
+#                            Default: y.
 #   HC_ALLOW_SUDO=1         Allow running as root/under sudo. Most CI chroots
 #                            run everything as root directly, so SUDO_USER is
 #                            unset there anyway and this normally isn't
@@ -262,14 +276,22 @@ rm $TBALL
 cd $XDIR
 
 
-# ask web-only
+# pick a build mode
 if [ "$HC_NONINTERACTIVE" = "1" ] ; then
-    WANT_WEBONLY="${HC_FORCE_WEBONLY:-y}"
+    if [ -n "$HC_BUILD_MODE" ] ; then
+        MODE="$HC_BUILD_MODE"
+    elif [ "${HC_FORCE_WEBONLY:-y}" = "y" ] ; then
+        MODE=web
+    else
+        MODE=hardware
+    fi
 else
-    if ask "build for web access only (no hardware display)" ; then WANT_WEBONLY=y; else WANT_WEBONLY=n; fi
+    # fb0 is CI/automation-only, not offered in the interactive flow, to
+    # keep the original interactive UX unchanged.
+    if ask "build for web access only (no hardware display)" ; then MODE=web; else MODE=hardware; fi
 fi
 
-if [ "$WANT_WEBONLY" = "y" ] ; then
+if [ "$MODE" = "web" ] ; then
 
     # just ask all sizes
     echo ""
@@ -288,6 +310,21 @@ if [ "$WANT_WEBONLY" = "y" ] ; then
     fi
     HC_BUILD="hamclock-web-$size"
     HC_WEBONLY=1
+    HC_FB0=0
+
+elif [ "$MODE" = "fb0" ] ; then
+
+    # Framebuffer build: draws directly to /dev/fb0, no X11 involved, so
+    # this is always non-interactive-only (fb0 is never offered above).
+    size="${HC_SIZE:-800x480}"
+    case "$size" in
+        800x480|1600x960|2400x1440|3200x1920) ;;
+        *) inform "Invalid HC_SIZE=$size, defaulting to 800x480"; size=800x480 ;;
+    esac
+    inform "Non-interactive: selected HamClock size $size (framebuffer build)"
+    HC_BUILD="hamclock-fb0-$size"
+    HC_WEBONLY=0
+    HC_FB0=1
 
 elif [ "$HC_NONINTERACTIVE" = "1" ] ; then
 
@@ -302,6 +339,7 @@ elif [ "$HC_NONINTERACTIVE" = "1" ] ; then
     inform "Non-interactive: selected HamClock size $size (hardware build)"
     HC_BUILD="hamclock-$size"
     HC_WEBONLY=0
+    HC_FB0=0
 
 else
 
@@ -331,6 +369,7 @@ else
     fi
     HC_BUILD="hamclock-$size"
     HC_WEBONLY=0
+    HC_FB0=0
 fi
 
 
@@ -339,8 +378,12 @@ fi
 let NLOGLINES=133
 inform Building $HC_BUILD ...
 WC0=$(wc -l < $LOGFN)
-echo running make $HC_BUILD >> $LOGFN
-make $HC_BUILD >> $LOGFN 2>&1 &
+MAKE_VARS=""
+if [ -n "$HC_FB_DEPTH" ] ; then
+    MAKE_VARS="FB_DEPTH=$HC_FB_DEPTH"
+fi
+echo running make $MAKE_VARS $HC_BUILD >> $LOGFN
+make $MAKE_VARS $HC_BUILD >> $LOGFN 2>&1 &
 job=$!
 while kill -0 $job 2>/dev/null; do
     if [ -t 1 ] ; then
@@ -415,7 +458,27 @@ fi
 
 # start on boot?
 if ask "start HamClock automatically each time Pi is booted" "${HC_AUTOSTART:-y}" ; then
-    if [ $HC_WEBONLY -eq 0 ] ; then
+    if [ "${HC_FB0:-0}" -eq 1 ] ; then
+        # framebuffer build: no X11/desktop involved at all, so this runs
+        # as a plain systemd service instead of a desktop autostart entry
+        # or crontab job. Needs root to open /dev/fb0, /dev/tty1, and
+        # /dev/input directly.
+        cat > /etc/systemd/system/hamclock.service <<SVCEOF
+[Unit]
+Description=HamClock framebuffer display
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/hamclock
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+        sudo systemctl enable hamclock.service >> $LOGFN 2>&1
+        inform Installed framebuffer autostart service: /etc/systemd/system/hamclock.service
+    elif [ $HC_WEBONLY -eq 0 ] ; then
         if [ "$HC_NONINTERACTIVE" = "1" ] ; then
             # $HOME is root during a CI build, not whatever account will
             # actually log into the desktop once the image is flashed and
@@ -464,7 +527,10 @@ if ask "start HamClock automatically each time Pi is booted" "${HC_AUTOSTART:-y}
     fi
 else
     # undo autostarting
-    if [ $HC_WEBONLY -eq 0 ] ; then
+    if [ "${HC_FB0:-0}" -eq 1 ] ; then
+        sudo systemctl disable hamclock.service >> $LOGFN 2>&1 || true
+        sudo rm -f /etc/systemd/system/hamclock.service
+    elif [ $HC_WEBONLY -eq 0 ] ; then
         rm -f $HOME/.config/autostart/hamclock.desktop
     else
         CTBTMP=.x.crontab
