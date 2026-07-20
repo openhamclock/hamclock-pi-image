@@ -8,7 +8,7 @@ on:
         required: false
         default: ''
       hamclock_size:
-        description: 'HamClock web build size'
+        description: 'HamClock build size'
         required: false
         default: '800x480'
         type: choice
@@ -23,10 +23,6 @@ on:
         default: 'y'
         type: choice
         options: ['y', 'n']
-      image_additional_mb:
-        description: 'Extra MB of scratch space added to the image before building'
-        required: false
-        default: '2048'
   # Uncomment to also rebuild automatically, e.g. every Sunday:
   # schedule:
   #   - cron: '0 6 * * 0'
@@ -45,19 +41,42 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Current Raspberry Pi OS release.
-          - name: trixie
+          # ----- Current Raspberry Pi OS release (Trixie) -----
+          - name: trixie-web
             codename: trixie
+            variant: web
             # Always resolves to the newest published arm64 Lite image.
             base_image: https://downloads.raspberrypi.org/raspios_lite_arm64_latest
-          # Previous Raspberry Pi OS release, pinned to a specific dated
-          # build (Raspberry Pi doesn't publish a "latest bookworm" alias
-          # once a newer codename exists). To refresh this later, pick a
-          # newer folder from:
+            force_webonly: 'y'
+            image_additional_mb: 2048
+
+          - name: trixie-hardware
+            codename: trixie
+            variant: hardware
+            # Always resolves to the newest published arm64 Desktop image.
+            base_image: https://downloads.raspberrypi.org/raspios_arm64_latest
+            force_webonly: 'n'
+            image_additional_mb: 3072
+
+          # ----- Previous Raspberry Pi OS release (Bookworm) -----
+          # Pinned to a specific dated build (Raspberry Pi doesn't publish a
+          # "latest bookworm" alias once a newer codename exists). To
+          # refresh these later, pick a newer date folder from:
           #   https://downloads.raspberrypi.com/raspios_lite_arm64/images/
-          - name: bookworm
+          #   https://downloads.raspberrypi.com/raspios_arm64/images/
+          - name: bookworm-web
             codename: bookworm
+            variant: web
             base_image: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+            force_webonly: 'y'
+            image_additional_mb: 2048
+
+          - name: bookworm-hardware
+            codename: bookworm
+            variant: hardware
+            base_image: https://downloads.raspberrypi.com/raspios_arm64/images/raspios_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64.img.xz
+            force_webonly: 'n'
+            image_additional_mb: 3072
 
     steps:
       - name: Checkout repository
@@ -69,20 +88,20 @@ jobs:
           sudo docker image prune --all --force || true
           df -h /
 
-      - name: Build ${{ matrix.codename }} image with HamClock
+      - name: Build ${{ matrix.name }} image with HamClock
         id: build
         uses: pguyot/arm-runner-action@v2
         with:
           base_image: ${{ matrix.base_image }}
           cpu: cortex-a53
-          image_additional_mb: ${{ github.event.inputs.image_additional_mb || '2048' }}
+          image_additional_mb: ${{ matrix.image_additional_mb }}
           copy_repository_path: /home/hamclock-build
           commands: |
             set -e
 
             export HC_NONINTERACTIVE=1
             export HC_ALLOW_SUDO=1
-            export HC_FORCE_WEBONLY=y
+            export HC_FORCE_WEBONLY="${{ matrix.force_webonly }}"
             export HC_SIZE="${{ github.event.inputs.hamclock_size || '800x480' }}"
             export HC_AUTOSTART="${{ github.event.inputs.autostart || 'y' }}"
 
@@ -118,7 +137,7 @@ jobs:
           set -e
           DATE=$(date +%Y-%m-%d)
           SRC="${{ steps.build.outputs.image }}"
-          OUT="hamclock-raspios-${{ matrix.codename }}-arm64-${DATE}.img"
+          OUT="hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-arm64-${DATE}.img"
           mv "$SRC" "$OUT"
           xz -T0 -6 -v "$OUT"
           sha256sum "${OUT}.xz" > "${OUT}.xz.sha256"
@@ -128,7 +147,7 @@ jobs:
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hamclock-raspios-${{ matrix.codename }}-arm64
+          name: hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-arm64
           path: |
             ${{ env.IMAGE_XZ }}
             ${{ env.IMAGE_SHA }}

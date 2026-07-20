@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-
 # script to install HamClock on RPi
-#
+
 # ---------------------------------------------------------------------------
 # Headless / CI support (added on top of the upstream script so it can be
 # driven from an automated Raspberry Pi OS image build, e.g. GitHub Actions).
 #
 #   HC_NONINTERACTIVE=1     Skip all y/n and select-menu prompts, using the
-#                            defaults below instead. When unset, the script
-#                            behaves exactly as it always has.
+#                            defaults below (or the per-question defaults
+#                            noted). When unset, the script behaves exactly
+#                            as it always has.
 #   HC_FORCE_WEBONLY=y|n    Whether the non-interactive build is web-only
 #                            (no hardware display). Default: y. Web-only is
 #                            required whenever there is no real or virtual
@@ -25,11 +25,14 @@
 #                            needed; it exists for chroot/nspawn setups that
 #                            do invoke this script via sudo.
 #
-# All existing command-line behavior (e.g. `-t <version>`) is unchanged.
+# All existing command-line behavior (e.g. `-t <version>`) is unchanged, and
+# every prompt still works interactively when HC_NONINTERACTIVE is unset.
 # ---------------------------------------------------------------------------
+
 
 # set log file
 LOGFN=$PWD/$(basename $0).log
+
 
 # find largest supported hamclock build size
 function largestsize ()
@@ -57,6 +60,7 @@ function largestsize ()
     echo $SW $SH $HCW $HCH
 }
 
+
 # ask "$1? [y/n] " then return 0 if respond y or 1 if respond n
 # $2, if given, is the answer used automatically when HC_NONINTERACTIVE=1
 # (defaults to "y" if omitted).
@@ -81,7 +85,9 @@ function ask ()
         echo -n "$prompt? [y/n] "
         read ANS
     done
+
     echo "answer: $ANS" >> $LOGFN
+
     [ "$ANS" = "y" ]
 }
 
@@ -90,6 +96,7 @@ function inform ()
 {
     echo "" >> $LOGFN
     echo $* >> $LOGFN
+
     echo ""
     echo $*
     echo ""
@@ -100,12 +107,16 @@ function dumpConfig ()
 {
     echo os-release
     cat /etc/os-release
+
     echo uname
     uname -a
+
     echo free -m
     free -m
+
     echo df
     df
+
     echo ping home
     ping -c 3 -W 3 clearskyinstitute.com || true
 }
@@ -114,6 +125,7 @@ function dumpConfig ()
 function get_hamclock_source_url()
 {
     local substring=$1
+
     if [ -z "$substring" ]; then
         echo "Usage: get_hamclock_url <version_substring> (e.g., 4.22)" >&2
         return 1
@@ -140,7 +152,6 @@ function get_hamclock_source_url()
         echo "Error: Asset '$target_asset' not found on GitHub." >&2
         return 1
     fi
-
     TBURL="$download_url"
 }
 
@@ -150,6 +161,7 @@ function find_latest_tag()
     STABLE_TAG=$(echo "$ALL_TAGS_JSON" | jq -r '.[].name' | grep -v "b" | sort -V | tail -n 1)
     BETA_TAG=$(echo "$ALL_TAGS_JSON" | jq -r '.[].name' | grep "b" | sort -V | tail -n 1)
 }
+
 
 ######################################################################################
 #
@@ -180,6 +192,7 @@ rm -f $LOGFN
 inform This script will install HamClock on Raspberry Pi OS.
 if ! ask "Proceed" "y" ; then exit 1; fi
 
+
 # check for another instance
 if sudo pkill -0 '^hamclock$' ; then
     inform Another hamclock seems to be running already.
@@ -193,29 +206,29 @@ echo -n HamClock installation begins at " " >> $LOGFN
 date -u >> $LOGFN
 dumpConfig >> $LOGFN
 
+
 # insure necessary helper packages are installed
 inform Installing required helper packages ...
 PKGS="\
-curl \
-g++ \
-gpiod \
-jq \
-libgpiod-dev \
-libx11-dev \
-linux-libc-dev \
-make \
-openssl \
-unzip \
-x11-utils \
-xdg-utils \
-xserver-xorg\
+    curl \
+    g++ \
+    gpiod \
+    jq \
+    libgpiod-dev \
+    libx11-dev \
+    linux-libc-dev \
+    make \
+    openssl \
+    unzip \
+    x11-utils \
+    xdg-utils \
+    xserver-xorg\
 "
 sudo apt-get -y -o Acquire::Check-Valid-Until=false update >> $LOGFN 2>&1
 sudo apt-get -y install $PKGS >> $LOGFN 2>&1
 if (( $? != 0 )) ; then echo error loading packages; exit 1; fi
 
 TBALL=ESPHamClock.zip
-
 if [ "$1" == -t ]; then
     # requesting a specific version
     if [ -z "$2" ]; then
@@ -236,6 +249,7 @@ if ! curl -A 'install-hc-rpi' -L --silent --show-error --output $TBALL $TBURL >>
     exit 1
 fi
 
+
 # explode
 XDIR=ESPHamClock
 rm -fr $XDIR
@@ -243,8 +257,10 @@ inform Exploding $TBALL into $XDIR ...
 if ! unzip $TBALL >> $LOGFN 2>&1 ; then inform Error exploding archive -- see $LOGFN; exit 1; fi
 rm $TBALL
 
+
 # cd inside for make
 cd $XDIR
+
 
 # ask web-only
 if [ "$HC_NONINTERACTIVE" = "1" ] ; then
@@ -254,6 +270,7 @@ else
 fi
 
 if [ "$WANT_WEBONLY" = "y" ] ; then
+
     # just ask all sizes
     echo ""
     if [ "$HC_NONINTERACTIVE" = "1" ] ; then
@@ -271,7 +288,23 @@ if [ "$WANT_WEBONLY" = "y" ] ; then
     fi
     HC_BUILD="hamclock-web-$size"
     HC_WEBONLY=1
+
+elif [ "$HC_NONINTERACTIVE" = "1" ] ; then
+
+    # No live X11 display to query in a CI chroot, and largestsize() needs
+    # one. Skip auto-detection entirely and take the size straight from
+    # HC_SIZE, same as the web-only path does.
+    size="${HC_SIZE:-800x480}"
+    case "$size" in
+        800x480|1600x960|2400x1440|3200x1920) ;;
+        *) inform "Invalid HC_SIZE=$size, defaulting to 800x480"; size=800x480 ;;
+    esac
+    inform "Non-interactive: selected HamClock size $size (hardware build)"
+    HC_BUILD="hamclock-$size"
+    HC_WEBONLY=0
+
 else
+
     # ask desired size from ones that fit unless it can only be 800x480
     read SW SH LHCW LHCH < <(largestsize)
     inform Display size appears to be ${SW}x${SH}.
@@ -300,6 +333,8 @@ else
     HC_WEBONLY=0
 fi
 
+
+
 # build with rough progress indication
 let NLOGLINES=133
 inform Building $HC_BUILD ...
@@ -324,6 +359,9 @@ if ! wait %1 >> $LOGFN 2>&1 ; then inform Build failed -- see $LOGFN; exit 1; fi
 # install
 if ! sudo make install >> $LOGFN 2>&1 ; then inform Install failed -- see $LOGFN; exit 1; fi
 
+
+
+
 # icon?
 if [ -d $HOME/Desktop ] && [ $HC_WEBONLY -eq 0 ] ; then
     HCDT=$HOME/Desktop/hamclock.desktop
@@ -339,13 +377,16 @@ if [ -d $HOME/Desktop ] && [ $HC_WEBONLY -eq 0 ] ; then
     fi
 fi
 
+
 # User Guide?
 if [ -d ~/Desktop ] && [ $HC_WEBONLY -eq 0 ] ; then
     UGFN=HamClockUserGuide.pdf
     DTFN="$HOME/Desktop/$UGFN"
+
     if ask "install User Guide on desktop" "y" ; then
         ALL_TAGS_JSON=$(curl -s "https://api.github.com/repos/openhamclock/hamclock/tags")
         STABLE_TAG=$(echo "$ALL_TAGS_JSON" | jq -r '.[].name' | grep -v "b" | sort -V | tail -n 1)
+
         if [ -z "$STABLE_TAG" ]; then
             inform Error finding latest HamClock release tag -- see "$LOGFN"
         else
@@ -359,6 +400,7 @@ if [ -d ~/Desktop ] && [ $HC_WEBONLY -eq 0 ] ; then
     fi
 fi
 
+
 # man page?
 MPATH=/usr/local/share/man/man1
 if [ -d $MPATH ] && [ $HC_WEBONLY -eq 0 ] && ask "install HamClock man page" "y" ; then
@@ -370,28 +412,45 @@ if [ -d $MPATH ] && [ $HC_WEBONLY -eq 0 ] && ask "install HamClock man page" "y"
     fi
 fi
 
+
 # start on boot?
 if ask "start HamClock automatically each time Pi is booted" "${HC_AUTOSTART:-y}" ; then
     if [ $HC_WEBONLY -eq 0 ] ; then
-        # use desktop system
-        DOTCFG=$HOME/.config
-        if [ -d $DOTCFG ] ; then
-            ASPATH=$DOTCFG/autostart
-            ASFILE=$ASPATH/hamclock.desktop
-            mkdir -p $ASPATH
-            if [ -e "$ASFILE" ] ; then
-                inform Autostart file already exists, leaving it unchanged: $ASFILE
-            else
-                cp hamclock.desktop "$ASFILE"
-            fi
+        if [ "$HC_NONINTERACTIVE" = "1" ] ; then
+            # $HOME is root during a CI build, not whatever account will
+            # actually log into the desktop once the image is flashed and
+            # a user is created via Raspberry Pi Imager. Install a
+            # system-wide autostart entry instead, so it applies no matter
+            # who logs in. Note this still only runs once someone actually
+            # logs into the graphical desktop -- enable auto-login in
+            # Imager's OS customization options for a fully hands-off boot.
+            SYS_AUTOSTART=/etc/xdg/autostart
+            mkdir -p $SYS_AUTOSTART
+            cp hamclock.desktop $SYS_AUTOSTART/hamclock.desktop
+            inform Installed system-wide autostart entry: $SYS_AUTOSTART/hamclock.desktop
         else
-            inform Error: $DOTCFG does not exist
+            # use desktop system
+            DOTCFG=$HOME/.config
+            if [ -d $DOTCFG ] ; then
+                ASPATH=$DOTCFG/autostart
+                ASFILE=$ASPATH/hamclock.desktop
+                mkdir -p $ASPATH
+                if [ -e "$ASFILE" ] ; then
+                    inform Autostart file already exists, leaving it unchanged: $ASFILE
+                else
+                    cp hamclock.desktop "$ASFILE"
+                fi
+            else
+                inform Error: $DOTCFG does not exist
+            fi
         fi
     else
         # add to crontab if not already
         CTBTMP=.x.crontab
         CRON_ENTRY='@reboot /usr/local/bin/hamclock'
-        crontab -l > $CTBTMP 2>/dev/null || :
+
+        crontab -l > $CTBTMP 2>/dev/null || : 
+
         if grep -Fqx "$CRON_ENTRY" "$CTBTMP" ; then
             inform hamclock is already in crontab
         elif grep -Eq '^[[:space:]]*@reboot[[:space:]]+/usr/local/bin/hamclock([[:space:]]|$)' "$CTBTMP" ; then
@@ -410,12 +469,12 @@ else
     else
         CTBTMP=.x.crontab
         CRON_ENTRY='@reboot /usr/local/bin/hamclock'
+
         crontab -l > $CTBTMP 2>/dev/null || :
         grep -Fvx "$CRON_ENTRY" "$CTBTMP" > ${CTBTMP}.new
         crontab ${CTBTMP}.new
         rm -f $CTBTMP ${CTBTMP}.new
     fi
 fi
-
 inform HamClock installation is complete.
 inform You may now run HamClock by typing hamclock.
