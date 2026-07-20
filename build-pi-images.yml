@@ -1,0 +1,118 @@
+name: Build HamClock Raspberry Pi images
+
+on:
+  workflow_dispatch:
+    inputs:
+      hamclock_version:
+        description: 'HamClock version to install, e.g. "4.22" (blank = latest release)'
+        required: false
+        default: ''
+      hamclock_size:
+        description: 'HamClock web build size'
+        required: false
+        default: '800x480'
+        type: choice
+        options:
+          - 800x480
+          - 1600x960
+          - 2400x1440
+          - 3200x1920
+      autostart:
+        description: 'Start HamClock automatically on boot'
+        required: false
+        default: 'y'
+        type: choice
+        options: ['y', 'n']
+      image_additional_mb:
+        description: 'Extra MB of scratch space added to the image before building'
+        required: false
+        default: '2048'
+  # Uncomment to also rebuild automatically, e.g. every Sunday:
+  # schedule:
+  #   - cron: '0 6 * * 0'
+
+# Avoid piling up overlapping multi-hour builds if you trigger this a lot.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Current Raspberry Pi OS release.
+          - name: trixie
+            codename: trixie
+            # Always resolves to the newest published arm64 Lite image.
+            base_image: https://downloads.raspberrypi.org/raspios_lite_arm64_latest
+          # Previous Raspberry Pi OS release, pinned to a specific dated
+          # build (Raspberry Pi doesn't publish a "latest bookworm" alias
+          # once a newer codename exists). To refresh this later, pick a
+          # newer folder from:
+          #   https://downloads.raspberrypi.com/raspios_lite_arm64/images/
+          - name: bookworm
+            codename: bookworm
+            base_image: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Build ${{ matrix.codename }} image with HamClock
+        id: build
+        uses: pguyot/arm-runner-action@v2
+        with:
+          base_image: ${{ matrix.base_image }}
+          cpu: cortex-a53
+          image_additional_mb: ${{ github.event.inputs.image_additional_mb || '2048' }}
+          copy_repository_path: /home/hamclock-build
+          commands: |
+            set -e
+
+            export HC_NONINTERACTIVE=1
+            export HC_ALLOW_SUDO=1
+            export HC_FORCE_WEBONLY=y
+            export HC_SIZE="${{ github.event.inputs.hamclock_size || '800x480' }}"
+            export HC_AUTOSTART="${{ github.event.inputs.autostart || 'y' }}"
+
+            chmod +x debian/install-hc-rpi
+            cd /root
+
+            VERSION_ARG=""
+            if [ -n "${{ github.event.inputs.hamclock_version }}" ]; then
+              VERSION_ARG="-t ${{ github.event.inputs.hamclock_version }}"
+            fi
+
+            /home/hamclock-build/debian/install-hc-rpi $VERSION_ARG
+
+      - name: Rename and compress image
+        run: |
+          set -e
+          DATE=$(date +%Y-%m-%d)
+          SRC="${{ steps.build.outputs.image }}"
+          OUT="hamclock-raspios-${{ matrix.codename }}-arm64-${DATE}.img"
+          mv "$SRC" "$OUT"
+          xz -T0 -6 -v "$OUT"
+          sha256sum "${OUT}.xz" > "${OUT}.xz.sha256"
+          echo "IMAGE_XZ=${OUT}.xz" >> "$GITHUB_ENV"
+          echo "IMAGE_SHA=${OUT}.xz.sha256" >> "$GITHUB_ENV"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hamclock-raspios-${{ matrix.codename }}-arm64
+          path: |
+            ${{ env.IMAGE_XZ }}
+            ${{ env.IMAGE_SHA }}
+          retention-days: 14
