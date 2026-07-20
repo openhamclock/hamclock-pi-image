@@ -23,9 +23,18 @@ on:
         default: 'y'
         type: choice
         options: ['y', 'n']
+      publish_release:
+        description: 'Also publish the built images to a GitHub Release'
+        required: false
+        default: false
+        type: boolean
   # Uncomment to also rebuild automatically, e.g. every Sunday:
   # schedule:
   #   - cron: '0 6 * * 0'
+
+# Needed for the publish job to create a release and upload assets.
+permissions:
+  contents: write
 
 # Avoid piling up overlapping multi-hour builds if you trigger this a lot.
 concurrency:
@@ -120,6 +129,109 @@ jobs:
             mkdir -p /boot/firmware
             mount --bind /boot /boot/firmware
 
+            # Default login: pi / pi.
+            #
+            # This uses the same userconf.txt mechanism Raspberry Pi Imager
+            # itself writes when you preconfigure a user in "Edit settings" --
+            # raspberrypi-sys-mods reads this on first boot, creates the
+            # account, and skips the interactive username/password wizard
+            # entirely. SECURITY NOTE: pi/pi is a widely-known default, and
+            # SSH is enabled by default further down -- the MOTD below warns
+            # people to change it, but don't publish images built this way
+            # somewhere untrusted people can grab them without expecting
+            # that reminder to actually get read.
+            apt-get -y -o Acquire::Check-Valid-Until=false update
+            apt-get -y install openssl
+            HC_HASH=$(openssl passwd -6 'pi')
+            echo "pi:${HC_HASH}" > /boot/firmware/userconf.txt
+
+            # A little welcome banner on login, with the password warning
+            # front and center. Clears out any distro default dynamic MOTD
+            # scripts first so nothing else gets appended after it.
+            rm -f /etc/update-motd.d/* 2>/dev/null || true
+            cat > /etc/motd <<'EOF'
+
+              _   _                 ____ _            _
+             | | | | __ _ _ __ ___ / ___| | ___   ___| | __
+             | |_| |/ _` | '_ ` _ \| |   | |/ _ \ / __| |/ /
+             |  _  | (_| | | | | | | |___| | (_) | (__|   <
+             |_| |_|\__,_|_| |_| |_|\____|_|\___/ \___|_|\_\
+                                                       de HamClock Pi
+
+              73! Welcome to your HamClock Raspberry Pi.
+
+              *** SECURITY: this device ships with the well-known default
+                  login pi/pi. Change it now -- just run: passwd ***
+
+              * No display attached? Open a browser to this Pi's address
+                to see HamClock.
+              * No WiFi configured yet? Connect to the "HamClock-Setup"
+                hotspot from your phone or laptop to get online.
+
+            EOF
+
+            # The Desktop base image should already include Chromium as
+            # part of its recommended-software set, but HamClock's
+            # local-display mode launches web links, so make sure it's
+            # actually there rather than assuming.
+            if [ "${{ matrix.variant }}" = "hardware" ]; then
+              apt-get -y -o Acquire::Check-Valid-Until=false update
+              apt-get -y install chromium
+            fi
+
+            # ---------------------------------------------------------------
+            # Comitup: WiFi captive-portal onboarding.
+            #
+            # Anyone with no monitor/keyboard can power this on, connect to
+            # the "HamClock-Setup" hotspot it broadcasts, and pick their own
+            # WiFi network from a page that pops up automatically -- no
+            # Raspberry Pi Imager customization step required.
+            # ---------------------------------------------------------------
+
+            # Raspberry Pi OS blocks WiFi by default until a regulatory
+            # domain is set, but Comitup's hotspot needs the radio on before
+            # that ever happens. Force it on unconditionally on every boot.
+            cat > /etc/systemd/system/wifi-on.service <<'EOF'
+            [Unit]
+            Description=Turn wifi on, regardless of regulatory domain
+            After=network.target network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/bin/nmcli radio wifi on
+
+            [Install]
+            WantedBy=NetworkManager.service
+            EOF
+            systemctl enable wifi-on.service
+
+            # Comitup needs its own repo on Bookworm/Trixie for a compatible
+            # python3-networkmanager build (the plain apt-get install comitup
+            # from default repos is too old to work reliably).
+            curl -L --silent --show-error -o /tmp/comitup-apt-source.deb \
+              https://davesteele.github.io/comitup/deb/davesteele-comitup-apt-source_1.3_all.deb
+            dpkg -i --force-all /tmp/comitup-apt-source.deb
+            rm -f /tmp/comitup-apt-source.deb
+            apt-get -y -o Acquire::Check-Valid-Until=false update
+            apt-get -y install comitup
+
+            # Let NetworkManager/Comitup own WiFi instead of the older
+            # Debian networking stack, per Comitup's install instructions.
+            rm -f /etc/network/interfaces
+            systemctl mask dnsmasq.service          || true
+            systemctl mask systemd-resolved.service || true
+            systemctl mask dhcpcd.service            || true
+            systemctl mask wpa_supplicant.service    || true
+            systemctl enable NetworkManager.service
+
+            # A recognizable hotspot name instead of the default "comitup-1234".
+            echo "ap_name: HamClock-Setup" >> /etc/comitup.conf
+
+            # Enable SSH by default so the device is reachable once it's on
+            # a real network.
+            touch /boot/firmware/ssh || true
+
             set +e
             /home/hamclock-build/debian/install-hc-rpi $VERSION_ARG
             RC=$?
@@ -152,3 +264,29 @@ jobs:
             ${{ env.IMAGE_XZ }}
             ${{ env.IMAGE_SHA }}
           retention-days: 14
+
+  publish:
+    name: Publish release
+    needs: build
+    if: ${{ github.event.inputs.publish_release == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: hamclock-raspios-*
+          merge-multiple: true
+
+      - name: Compute release tag
+        id: tag
+        run: echo "tag=hamclock-images-$(date +%Y-%m-%d)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: HamClock Pi images (${{ steps.tag.outputs.tag }})
+          files: artifacts/*
+          draft: false
+          prerelease: false
