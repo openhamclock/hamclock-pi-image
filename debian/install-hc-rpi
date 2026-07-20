@@ -30,9 +30,9 @@
 #                            fails to set 32-bit color mode on your
 #                            hardware's framebuffer driver.
 #   HC_AUTOSTART=y|n        Start HamClock automatically on boot (desktop
-#                            autostart entry for hardware, @reboot crontab
-#                            entry for web, or a systemd service for fb0).
-#                            Default: y.
+#                            autostart entry for hardware, or a systemd
+#                            service -- with automatic crash restart -- for
+#                            web and fb0). Default: y.
 #   HC_ALLOW_SUDO=1         Allow running as root/under sudo. Most CI chroots
 #                            run everything as root directly, so SUDO_USER is
 #                            unset there anyway and this normally isn't
@@ -467,10 +467,12 @@ if ask "start HamClock automatically each time Pi is booted" "${HC_AUTOSTART:-y}
 [Unit]
 Description=HamClock framebuffer display
 After=multi-user.target
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/local/bin/hamclock
 Restart=always
+RestartSec=5
 User=root
 
 [Install]
@@ -508,22 +510,28 @@ SVCEOF
             fi
         fi
     else
-        # add to crontab if not already
-        CTBTMP=.x.crontab
-        CRON_ENTRY='@reboot /usr/local/bin/hamclock'
+        # web build: a real systemd service instead of a bare @reboot cron
+        # entry, so a crash gets restarted automatically (cron only runs it
+        # once, at boot, with no supervision and no captured logs) and
+        # journalctl actually has something to show when it dies.
+        cat > /etc/systemd/system/hamclock.service <<SVCEOF
+[Unit]
+Description=HamClock web server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
 
-        crontab -l > $CTBTMP 2>/dev/null || : 
+[Service]
+ExecStart=/usr/local/bin/hamclock
+Restart=always
+RestartSec=5
+User=root
 
-        if grep -Fqx "$CRON_ENTRY" "$CTBTMP" ; then
-            inform hamclock is already in crontab
-        elif grep -Eq '^[[:space:]]*@reboot[[:space:]]+/usr/local/bin/hamclock([[:space:]]|$)' "$CTBTMP" ; then
-            inform Existing HamClock @reboot entry found, leaving it unchanged
-        else
-            inform adding hamclock to crontab
-            echo "$CRON_ENTRY" >> $CTBTMP
-            crontab $CTBTMP
-        fi
-        rm -f $CTBTMP
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+        sudo systemctl enable hamclock.service >> $LOGFN 2>&1
+        inform Installed web autostart service: /etc/systemd/system/hamclock.service
     fi
 else
     # undo autostarting
@@ -533,13 +541,8 @@ else
     elif [ $HC_WEBONLY -eq 0 ] ; then
         rm -f $HOME/.config/autostart/hamclock.desktop
     else
-        CTBTMP=.x.crontab
-        CRON_ENTRY='@reboot /usr/local/bin/hamclock'
-
-        crontab -l > $CTBTMP 2>/dev/null || :
-        grep -Fvx "$CRON_ENTRY" "$CTBTMP" > ${CTBTMP}.new
-        crontab ${CTBTMP}.new
-        rm -f $CTBTMP ${CTBTMP}.new
+        sudo systemctl disable hamclock.service >> $LOGFN 2>&1 || true
+        sudo rm -f /etc/systemd/system/hamclock.service
     fi
 fi
 inform HamClock installation is complete.

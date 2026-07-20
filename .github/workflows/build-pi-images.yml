@@ -144,6 +144,14 @@ jobs:
             mkdir -p /boot/firmware
             mount --bind /boot /boot/firmware
 
+            # Default locale: en_US.UTF-8 instead of Raspberry Pi OS's
+            # stock en_GB.UTF-8.
+            apt-get -y -o Acquire::Check-Valid-Until=false update
+            apt-get -y install locales
+            sed -i 's/^# *\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen
+            locale-gen
+            update-locale LANG=en_US.UTF-8
+
             # Default login: pi / pi.
             #
             # This uses the same userconf.txt mechanism Raspberry Pi Imager
@@ -251,21 +259,19 @@ jobs:
             # A recognizable hotspot name instead of the default "comitup-1234".
             echo "ap_name: HamClock-Setup" >> /etc/comitup.conf
 
-            # HamClock (web variant) launches via a @reboot cron entry,
-            # which doesn't wait for the network to actually be up -- so it
-            # can start before WiFi is connected, whether that's during
-            # first-time setup via the hotspot or just an ordinary reboot.
-            # Have Comitup restart it once the device is genuinely
-            # CONNECTED, so it's never stuck serving a dead/pre-network
-            # session.
-            if [ "${{ matrix.variant }}" = "web" ]; then
+            # HamClock (web and fb0 variants) can start before the network
+            # is actually up -- neither systemd unit waits for real
+            # connectivity, just for the network stack to exist. That race
+            # can happen during first-time setup via the hotspot, or on any
+            # ordinary reboot. Have Comitup restart the service once the
+            # device is genuinely CONNECTED, so it's never stuck
+            # serving/rendering a dead/pre-network session.
+            if [ "${{ matrix.variant }}" = "web" ] || [ "${{ matrix.variant }}" = "fb0" ]; then
               echo "external_callback: /usr/local/bin/comitup-callback" >> /etc/comitup.conf
               cat > /usr/local/bin/comitup-callback <<'EOF'
             #!/usr/bin/env bash
             if [ "$1" = "CONNECTED" ]; then
-                pkill -x hamclock 2>/dev/null || true
-                sleep 1
-                /usr/local/bin/hamclock >/dev/null 2>&1 &
+                systemctl restart hamclock.service 2>/dev/null || true
             fi
             EOF
               chmod 755 /usr/local/bin/comitup-callback
