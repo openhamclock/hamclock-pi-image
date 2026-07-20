@@ -218,15 +218,44 @@ jobs:
 
             # Let NetworkManager/Comitup own WiFi instead of the older
             # Debian networking stack, per Comitup's install instructions.
+            # NOTE: deliberately NOT masking wpa_supplicant.service here --
+            # on Bookworm/Trixie, NetworkManager itself D-Bus-activates that
+            # exact unit to talk to the radio (client mode and AP/hotspot
+            # mode both need it). Masking it leaves the device stuck at
+            # NM state 20 (unavailable) forever, since NM can never get a
+            # working supplicant. That mask instruction is stale guidance
+            # from pre-NetworkManager Raspberry Pi OS (Bullseye and
+            # earlier), where wpa_supplicant ran standalone and genuinely
+            # conflicted with NetworkManager.
             rm -f /etc/network/interfaces
             systemctl mask dnsmasq.service          || true
             systemctl mask systemd-resolved.service || true
             systemctl mask dhcpcd.service            || true
-            systemctl mask wpa_supplicant.service    || true
             systemctl enable NetworkManager.service
 
             # A recognizable hotspot name instead of the default "comitup-1234".
             echo "ap_name: HamClock-Setup" >> /etc/comitup.conf
+
+            # HamClock (web variant) launches via a @reboot cron entry,
+            # which doesn't wait for the network to actually be up -- so it
+            # can start before WiFi is connected, whether that's during
+            # first-time setup via the hotspot or just an ordinary reboot.
+            # Have Comitup restart it once the device is genuinely
+            # CONNECTED, so it's never stuck serving a dead/pre-network
+            # session.
+            if [ "${{ matrix.variant }}" = "web" ]; then
+              echo "external_callback: /usr/local/bin/comitup-callback" >> /etc/comitup.conf
+              cat > /usr/local/bin/comitup-callback <<'EOF'
+            #!/usr/bin/env bash
+            if [ "$1" = "CONNECTED" ]; then
+                pkill -x hamclock 2>/dev/null || true
+                sleep 1
+                /usr/local/bin/hamclock >/dev/null 2>&1 &
+            fi
+            EOF
+              chmod 755 /usr/local/bin/comitup-callback
+              chown root:root /usr/local/bin/comitup-callback
+            fi
 
             # Enable SSH by default so the device is reachable once it's on
             # a real network.
