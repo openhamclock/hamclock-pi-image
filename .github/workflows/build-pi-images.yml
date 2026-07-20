@@ -94,10 +94,20 @@ jobs:
               VERSION_ARG="-t ${{ github.event.inputs.hamclock_version }}"
             fi
 
+            # arm-runner-action mounts the boot partition at /boot, but
+            # Bookworm/Trixie kernel packages expect it at /boot/firmware.
+            # Alias the two so kernel postinst scripts (pulled in as a
+            # dependency of linux-libc-dev) don't fail during apt install.
+            mkdir -p /boot/firmware
+            mount --bind /boot /boot/firmware
+
             set +e
             /home/hamclock-build/debian/install-hc-rpi $VERSION_ARG
             RC=$?
             set -e
+
+            umount /boot/firmware || true
+
             echo "----- install-hc-rpi.log -----"
             cat /root/install-hc-rpi.log || true
             echo "----- end log -----"
