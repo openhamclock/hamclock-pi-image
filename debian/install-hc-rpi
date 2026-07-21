@@ -512,7 +512,7 @@ SVCEOF
             # Imager's OS customization options for a fully hands-off boot.
             SYS_AUTOSTART=/etc/xdg/autostart
             mkdir -p $SYS_AUTOSTART
-            sed -e 's/^Exec=\(.*\)$/Exec=\1 -f on/' < hamclock.desktop > $SYS_AUTOSTART/hamclock.desktop
+            sed -e "s^/usr/local/bin/hamclock'^/usr/local/bin/hamclock -f on'^" < hamclock.desktop > $SYS_AUTOSTART/hamclock.desktop
             inform Installed system-wide autostart entry, fullscreen by default: $SYS_AUTOSTART/hamclock.desktop
         else
             # use desktop system
@@ -524,7 +524,7 @@ SVCEOF
                 if [ -e "$ASFILE" ] ; then
                     inform Autostart file already exists, leaving it unchanged: $ASFILE
                 else
-                    sed -e 's/^Exec=\(.*\)$/Exec=\1 -f on/' < hamclock.desktop > "$ASFILE"
+                    sed -e "s^/usr/local/bin/hamclock'^/usr/local/bin/hamclock -f on'^" < hamclock.desktop > "$ASFILE"
                 fi
             else
                 inform Error: $DOTCFG does not exist
