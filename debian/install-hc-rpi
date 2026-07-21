@@ -406,37 +406,73 @@ if ! sudo make install >> $LOGFN 2>&1 ; then inform Install failed -- see $LOGFN
 
 
 
-# icon?
-if [ -d $HOME/Desktop ] && [ $HC_WEBONLY -eq 0 ] ; then
-    HCDT=$HOME/Desktop/hamclock.desktop
-    HCPNG=$HOME/.hamclock/hamclock.png
-    if ask "install HamClock desktop icon" "y" ; then
-        mkdir -p $HOME/.hamclock
-        rm -f $HCDT $HCPNG
-        cp hamclock.png $HCPNG
-        sed -e "s^Icon.*^Icon=$HOME/.hamclock/hamclock.png^" < hamclock.desktop > $HCDT
-        chmod u+x $HCDT
-    else
-        rm -f $HCDT $HCPNG
-    fi
-elif [ "$HC_NONINTERACTIVE" = "1" ] && [ "${HC_FB0:-0}" -ne 1 ] && [ $HC_WEBONLY -eq 0 ] ; then
-    # $HOME is root during a CI build, which never has a Desktop folder, so
-    # the check above always misses. Install into /etc/skel instead, so the
-    # icon is copied into the pi account's home automatically when
-    # userconf.txt creates it at first boot. NOTE: this hardcodes
-    # /home/pi -- if the default username set elsewhere in this pipeline
-    # ever changes, this path needs to change with it.
-    if ask "install HamClock desktop icon" "y" ; then
-        SKEL_HAMCLOCK=/etc/skel/.hamclock
-        SKEL_DESKTOP=/etc/skel/Desktop
-        mkdir -p "$SKEL_HAMCLOCK" "$SKEL_DESKTOP"
-        cp hamclock.png "$SKEL_HAMCLOCK/hamclock.png"
-        sed -e "s^Icon.*^Icon=/home/pi/.hamclock/hamclock.png^" < hamclock.desktop > "$SKEL_DESKTOP/hamclock.desktop"
-        chmod u+x "$SKEL_DESKTOP/hamclock.desktop"
-        inform Installed desktop icon template in /etc/skel: $SKEL_DESKTOP/hamclock.desktop
+# desktop icon?
+#
+# Install the launcher and artwork globally, then use an XDG autostart helper
+# to place the launcher on each graphical user's desktop at login. This avoids
+# hard-coding /home/pi, works for renamed/new users, and repairs a missing icon
+# after reboot/login. /etc/skel alone is insufficient because it is only copied
+# when a home directory is first created.
+if [ "${HC_FB0:-0}" -ne 1 ] && [ $HC_WEBONLY -eq 0 ] ; then
+    if ask "install HamClock desktop icon for all users" "y" ; then
+        HC_GLOBAL_ICON=/usr/local/share/pixmaps/hamclock.png
+        HC_GLOBAL_DESKTOP=/usr/local/share/applications/hamclock.desktop
+        HC_ICON_HELPER=/usr/local/sbin/install-hamclock-desktop-icon
+        HC_ICON_AUTOSTART=/etc/xdg/autostart/hamclock-desktop-icon.desktop
+
+        sudo install -d /usr/local/share/pixmaps /usr/local/share/applications \
+            /usr/local/sbin /etc/xdg/autostart
+        sudo install -m 0644 hamclock.png "$HC_GLOBAL_ICON"
+        sed -e "s^Icon.*^Icon=$HC_GLOBAL_ICON^" < hamclock.desktop \
+            | sudo tee "$HC_GLOBAL_DESKTOP" >/dev/null
+        sudo chmod 0644 "$HC_GLOBAL_DESKTOP"
+
+        sudo tee "$HC_ICON_HELPER" >/dev/null <<'EOF'
+#!/bin/sh
+
+# Run in the graphical user's session, so HOME always belongs to that user.
+[ -n "$HOME" ] || exit 0
+[ "$(id -u)" -ge 1000 ] 2>/dev/null || exit 0
+
+DESKTOP_DIR=""
+if command -v xdg-user-dir >/dev/null 2>&1; then
+    DESKTOP_DIR=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+fi
+[ -n "$DESKTOP_DIR" ] || DESKTOP_DIR="$HOME/Desktop"
+
+mkdir -p "$DESKTOP_DIR" || exit 0
+install -m 0755 /usr/local/share/applications/hamclock.desktop \
+    "$DESKTOP_DIR/hamclock.desktop"
+
+# Some desktops track launcher trust as metadata rather than only executable mode.
+if command -v gio >/dev/null 2>&1; then
+    gio set "$DESKTOP_DIR/hamclock.desktop" metadata::trusted true \
+        >/dev/null 2>&1 || true
+fi
+EOF
+        sudo chmod 0755 "$HC_ICON_HELPER"
+
+        sudo tee "$HC_ICON_AUTOSTART" >/dev/null <<EOF
+[Desktop Entry]
+Type=Application
+Name=Install HamClock Desktop Icon
+Comment=Ensure the HamClock launcher is present for this user
+Exec=$HC_ICON_HELPER
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOF
+        sudo chmod 0644 "$HC_ICON_AUTOSTART"
+
+        # Also install it immediately for an interactive, non-root desktop user;
+        # image builds run as root and will rely on XDG autostart at first login.
+        if [ "$(id -u)" -ge 1000 ] 2>/dev/null && [ -d "$HOME" ]; then
+            "$HC_ICON_HELPER"
+        fi
+
+        inform Installed a username-independent HamClock desktop icon for all users
     fi
 fi
-
 
 # User Guide?
 if [ -d ~/Desktop ] && [ $HC_WEBONLY -eq 0 ] ; then

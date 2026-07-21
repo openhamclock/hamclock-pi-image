@@ -161,19 +161,6 @@ jobs:
               sed -i 's/^dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d/' /boot/firmware/config.txt
             fi
 
-            # Custom boot splash (OHB logo) instead of the default Raspberry
-            # Pi rainbow/pix theme. Desktop-only: Lite images don't show a
-            # graphical splash the same way, and fb0 builds already disable
-            # KMS above, which Plymouth's rendering depends on. On
-            # Bookworm+ the splash image gets baked into the initramfs, so
-            # just overwriting the file does nothing until it's rebuilt.
-            if [ "${{ matrix.variant }}" = "hardware" ] && [ -f /home/hamclock-build/assets/ohb-splash.png ]; then
-              cp /home/hamclock-build/assets/ohb-splash.png /usr/share/plymouth/themes/pix/splash.png
-              if command -v plymouth-set-default-theme >/dev/null 2>&1 ; then
-                plymouth-set-default-theme --rebuild-initrd pix
-              fi
-            fi
-
             # Default locale: en_US.UTF-8 instead of Raspberry Pi OS's
             # stock en_GB.UTF-8.
             apt-get -y -o Acquire::Check-Valid-Until=false update
@@ -316,6 +303,45 @@ jobs:
             /home/hamclock-build/debian/install-hc-rpi $VERSION_ARG
             RC=$?
             set -e
+
+            # Replace the standard "Welcome to Raspberry Pi Desktop" Plymouth
+            # image after every package and HamClock installation step. The
+            # splash is embedded in the initramfs on Bookworm/Trixie, and a
+            # later package operation can otherwise rebuild the initramfs with
+            # the stock Raspberry Pi image again.
+            if [ "${{ matrix.variant }}" = "hardware" ]; then
+              OHB_SPLASH=/home/hamclock-build/assets/ohb-splash.png
+              PLYMOUTH_SPLASH=/usr/share/plymouth/themes/pix/splash.png
+
+              if [ ! -f "$OHB_SPLASH" ]; then
+                echo "ERROR: Missing custom splash: $OHB_SPLASH" >&2
+                exit 1
+              fi
+
+              install -D -m 0644 "$OHB_SPLASH" "$PLYMOUTH_SPLASH"
+
+              # Ensure the pix theme is selected, then explicitly rebuild all
+              # installed initramfs images. The explicit update-initramfs call
+              # is retained because behavior differs slightly among Raspberry
+              # Pi OS releases and package versions.
+              if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+                plymouth-set-default-theme pix
+              fi
+
+              if command -v update-initramfs >/dev/null 2>&1; then
+                update-initramfs -u -k all
+              elif command -v plymouth-set-default-theme >/dev/null 2>&1; then
+                plymouth-set-default-theme --rebuild-initrd pix
+              else
+                echo "ERROR: Unable to rebuild initramfs for Plymouth" >&2
+                exit 1
+              fi
+
+              cmp -s "$OHB_SPLASH" "$PLYMOUTH_SPLASH" || {
+                echo "ERROR: Plymouth splash verification failed" >&2
+                exit 1
+              }
+            fi
 
             umount /boot/firmware || true
 
