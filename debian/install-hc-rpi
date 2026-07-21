@@ -225,6 +225,7 @@ dumpConfig >> $LOGFN
 inform Installing required helper packages ...
 PKGS="\
     curl \
+    fbset \
     g++ \
     gpiod \
     jq \
@@ -470,10 +471,14 @@ After=multi-user.target
 StartLimitIntervalSec=0
 
 [Service]
+ExecStartPre=/usr/bin/fbset -depth 32
+ExecStartPre=/usr/bin/sleep 10
+Type=simple
 ExecStart=/usr/local/bin/hamclock
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=3
 User=root
+Group=root
 
 [Install]
 WantedBy=multi-user.target

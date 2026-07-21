@@ -54,6 +54,7 @@ jobs:
           - name: trixie-web
             codename: trixie
             variant: web
+            arch: arm64
             # Always resolves to the newest published arm64 Lite image.
             base_image: https://downloads.raspberrypi.org/raspios_lite_arm64_latest
             build_mode: web
@@ -62,6 +63,7 @@ jobs:
           - name: trixie-hardware
             codename: trixie
             variant: hardware
+            arch: arm64
             # Always resolves to the newest published arm64 Desktop image.
             base_image: https://downloads.raspberrypi.org/raspios_arm64_latest
             build_mode: hardware
@@ -70,8 +72,21 @@ jobs:
           - name: trixie-fb0
             codename: trixie
             variant: fb0
+            arch: arm64
             # fb0 needs no desktop at all, same Lite image as web.
             base_image: https://downloads.raspberrypi.org/raspios_lite_arm64_latest
+            build_mode: fb0
+            image_additional_mb: 2048
+
+          - name: trixie-fb0-32bit
+            codename: trixie
+            variant: fb0
+            arch: armhf
+            # 32-bit build matching a confirmed-working community recipe
+            # for fb0 on real HDMI hardware. Untested by us against the
+            # arm64 fb0 build above -- kept as a separate artifact so both
+            # can be tried.
+            base_image: https://downloads.raspberrypi.org/raspios_lite_armhf_latest
             build_mode: fb0
             image_additional_mb: 2048
 
@@ -84,6 +99,7 @@ jobs:
           - name: bookworm-web
             codename: bookworm
             variant: web
+            arch: arm64
             base_image: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
             build_mode: web
             image_additional_mb: 2048
@@ -91,6 +107,7 @@ jobs:
           - name: bookworm-hardware
             codename: bookworm
             variant: hardware
+            arch: arm64
             base_image: https://downloads.raspberrypi.com/raspios_arm64/images/raspios_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64.img.xz
             build_mode: hardware
             image_additional_mb: 3072
@@ -98,6 +115,7 @@ jobs:
           - name: bookworm-fb0
             codename: bookworm
             variant: fb0
+            arch: arm64
             base_image: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
             build_mode: fb0
             image_additional_mb: 2048
@@ -143,6 +161,15 @@ jobs:
             # dependency of linux-libc-dev) don't fail during apt install.
             mkdir -p /boot/firmware
             mount --bind /boot /boot/firmware
+
+            # fb0 builds draw directly to the legacy /dev/fb0 device, which
+            # doesn't behave correctly under Raspberry Pi OS's default
+            # KMS/DRM graphics driver. Disable it so the classic framebuffer
+            # driver is used instead. (web/hardware variants don't touch
+            # /dev/fb0 at all, so this is left alone for them.)
+            if [ "${{ matrix.variant }}" = "fb0" ]; then
+              sed -i 's/^dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d/' /boot/firmware/config.txt
+            fi
 
             # Default locale: en_US.UTF-8 instead of Raspberry Pi OS's
             # stock en_GB.UTF-8.
@@ -299,7 +326,7 @@ jobs:
           set -e
           DATE=$(date +%Y-%m-%d)
           SRC="${{ steps.build.outputs.image }}"
-          OUT="hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-arm64-${DATE}.img"
+          OUT="hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-${{ matrix.arch }}-${DATE}.img"
           mv "$SRC" "$OUT"
           xz -T0 -6 -v "$OUT"
           sha256sum "${OUT}.xz" > "${OUT}.xz.sha256"
@@ -309,7 +336,7 @@ jobs:
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-arm64
+          name: hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-${{ matrix.arch }}
           path: |
             ${{ env.IMAGE_XZ }}
             ${{ env.IMAGE_SHA }}
