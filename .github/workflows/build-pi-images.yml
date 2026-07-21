@@ -161,6 +161,19 @@ jobs:
               sed -i 's/^dtoverlay=vc4-kms-v3d/#dtoverlay=vc4-kms-v3d/' /boot/firmware/config.txt
             fi
 
+            # Custom boot splash (OHB logo) instead of the default Raspberry
+            # Pi rainbow/pix theme. Desktop-only: Lite images don't show a
+            # graphical splash the same way, and fb0 builds already disable
+            # KMS above, which Plymouth's rendering depends on. On
+            # Bookworm+ the splash image gets baked into the initramfs, so
+            # just overwriting the file does nothing until it's rebuilt.
+            if [ "${{ matrix.variant }}" = "hardware" ] && [ -f /home/hamclock-build/assets/ohb-splash.png ]; then
+              cp /home/hamclock-build/assets/ohb-splash.png /usr/share/plymouth/themes/pix/splash.png
+              if command -v plymouth-set-default-theme >/dev/null 2>&1 ; then
+                plymouth-set-default-theme --rebuild-initrd pix
+              fi
+            fi
+
             # Default locale: en_US.UTF-8 instead of Raspberry Pi OS's
             # stock en_GB.UTF-8.
             apt-get -y -o Acquire::Check-Valid-Until=false update

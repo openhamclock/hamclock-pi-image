@@ -419,6 +419,22 @@ if [ -d $HOME/Desktop ] && [ $HC_WEBONLY -eq 0 ] ; then
     else
         rm -f $HCDT $HCPNG
     fi
+elif [ "$HC_NONINTERACTIVE" = "1" ] && [ "${HC_FB0:-0}" -ne 1 ] && [ $HC_WEBONLY -eq 0 ] ; then
+    # $HOME is root during a CI build, which never has a Desktop folder, so
+    # the check above always misses. Install into /etc/skel instead, so the
+    # icon is copied into the pi account's home automatically when
+    # userconf.txt creates it at first boot. NOTE: this hardcodes
+    # /home/pi -- if the default username set elsewhere in this pipeline
+    # ever changes, this path needs to change with it.
+    if ask "install HamClock desktop icon" "y" ; then
+        SKEL_HAMCLOCK=/etc/skel/.hamclock
+        SKEL_DESKTOP=/etc/skel/Desktop
+        mkdir -p "$SKEL_HAMCLOCK" "$SKEL_DESKTOP"
+        cp hamclock.png "$SKEL_HAMCLOCK/hamclock.png"
+        sed -e "s^Icon.*^Icon=/home/pi/.hamclock/hamclock.png^" < hamclock.desktop > "$SKEL_DESKTOP/hamclock.desktop"
+        chmod u+x "$SKEL_DESKTOP/hamclock.desktop"
+        inform Installed desktop icon template in /etc/skel: $SKEL_DESKTOP/hamclock.desktop
+    fi
 fi
 
 
@@ -496,8 +512,8 @@ SVCEOF
             # Imager's OS customization options for a fully hands-off boot.
             SYS_AUTOSTART=/etc/xdg/autostart
             mkdir -p $SYS_AUTOSTART
-            cp hamclock.desktop $SYS_AUTOSTART/hamclock.desktop
-            inform Installed system-wide autostart entry: $SYS_AUTOSTART/hamclock.desktop
+            sed -e 's/^Exec=\(.*\)$/Exec=\1 -f on/' < hamclock.desktop > $SYS_AUTOSTART/hamclock.desktop
+            inform Installed system-wide autostart entry, fullscreen by default: $SYS_AUTOSTART/hamclock.desktop
         else
             # use desktop system
             DOTCFG=$HOME/.config
@@ -508,7 +524,7 @@ SVCEOF
                 if [ -e "$ASFILE" ] ; then
                     inform Autostart file already exists, leaving it unchanged: $ASFILE
                 else
-                    cp hamclock.desktop "$ASFILE"
+                    sed -e 's/^Exec=\(.*\)$/Exec=\1 -f on/' < hamclock.desktop > "$ASFILE"
                 fi
             else
                 inform Error: $DOTCFG does not exist
