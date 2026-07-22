@@ -51,14 +51,14 @@ jobs:
       matrix:
         include:
           # ----- Current Raspberry Pi OS release (Trixie) -----
-          - name: trixie-web-64bit
-            codename: trixie
-            variant: web
-            arch: arm64
+          #- name: trixie-web-64bit
+          #  codename: trixie
+          #  variant: web
+          #  arch: arm64
             # Always resolves to the newest published arm64 Lite image.
-            base_image: https://downloads.raspberrypi.org/raspios_lite_arm64_latest
-            build_mode: web
-            image_additional_mb: 2048
+          #  base_image: https://downloads.raspberrypi.org/raspios_lite_arm64_latest
+          #  build_mode: web
+          #  image_additional_mb: 2048
 
           - name: trixie-desktop-64bit
             codename: trixie
@@ -69,15 +69,15 @@ jobs:
             build_mode: hardware
             image_additional_mb: 3072
 
-          - name: trixie-fb0-32bit
-            codename: trixie
-            variant: fb0
-            arch: armhf
+          #- name: trixie-fb0-32bit
+          #  codename: trixie
+          #  variant: fb0
+          #  arch: armhf
             # 32-bit build matching a confirmed-working community recipe
             # for fb0 on real HDMI hardware.
-            base_image: https://downloads.raspberrypi.org/raspios_lite_armhf_latest
-            build_mode: fb0
-            image_additional_mb: 2048
+          #  base_image: https://downloads.raspberrypi.org/raspios_lite_armhf_latest
+          #  build_mode: fb0
+          #  image_additional_mb: 2048
 
           # ----- Previous Raspberry Pi OS release (Bookworm) -----
           # Pinned to a specific dated build (Raspberry Pi doesn't publish a
@@ -86,29 +86,29 @@ jobs:
           #   https://downloads.raspberrypi.com/raspios_lite_arm64/images/
           #   https://downloads.raspberrypi.com/raspios_arm64/images/
           #   https://downloads.raspberrypi.com/raspios_lite_armhf/images/
-          - name: bookworm-web-64bit
-            codename: bookworm
-            variant: web
-            arch: arm64
-            base_image: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
-            build_mode: web
-            image_additional_mb: 2048
+          #- name: bookworm-web-64bit
+          #  codename: bookworm
+          #  variant: web
+          #  arch: arm64
+          #  base_image: https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz
+          #  build_mode: web
+          #  image_additional_mb: 2048
 
-          - name: bookworm-desktop-64bit
-            codename: bookworm
-            variant: hardware
-            arch: arm64
-            base_image: https://downloads.raspberrypi.com/raspios_arm64/images/raspios_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64.img.xz
-            build_mode: hardware
-            image_additional_mb: 3072
+          #- name: bookworm-desktop-64bit
+          #  codename: bookworm
+          #  variant: hardware
+          #  arch: arm64
+          #  base_image: https://downloads.raspberrypi.com/raspios_arm64/images/raspios_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64.img.xz
+          #  build_mode: hardware
+          #  image_additional_mb: 3072
 
-          - name: bookworm-fb0-32bit
-            codename: bookworm
-            variant: fb0
-            arch: armhf
-            base_image: https://downloads.raspberrypi.com/raspios_lite_armhf/images/raspios_lite_armhf-2025-05-13/2025-05-13-raspios-bookworm-armhf-lite.img.xz
-            build_mode: fb0
-            image_additional_mb: 2048
+          #- name: bookworm-fb0-32bit
+          #  codename: bookworm
+          #  variant: fb0
+          #  arch: armhf
+          #  base_image: https://downloads.raspberrypi.com/raspios_lite_armhf/images/raspios_lite_armhf-2025-05-13/2025-05-13-raspios-bookworm-armhf-lite.img.xz
+          #  build_mode: fb0
+          #  image_additional_mb: 2048
 
     steps:
       - name: Checkout repository
