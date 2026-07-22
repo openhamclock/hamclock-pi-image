@@ -320,20 +320,20 @@ jobs:
 
               install -D -m 0644 "$OHB_SPLASH" "$PLYMOUTH_SPLASH"
 
-              # Ensure the pix theme is selected, then explicitly rebuild all
-              # installed initramfs images. The explicit update-initramfs call
-              # is retained because behavior differs slightly among Raspberry
-              # Pi OS releases and package versions.
+              # Rebuild only what Plymouth itself needs, not a full
+              # multi-kernel initramfs regeneration. update-initramfs -u -k
+              # all also re-runs hardware/module autodetection, which is
+              # unreliable inside a cross-architecture QEMU chroot on a
+              # GitHub Actions runner (it has no relationship to the real
+              # Pi's actual GPU/display hardware) -- that mismatch is a
+              # likely cause of the graphical desktop failing to start and
+              # falling back to its openbox safety-net session on real
+              # boot, while this narrower rebuild avoids touching anything
+              # outside Plymouth's own theme data.
               if command -v plymouth-set-default-theme >/dev/null 2>&1; then
-                plymouth-set-default-theme pix
-              fi
-
-              if command -v update-initramfs >/dev/null 2>&1; then
-                update-initramfs -u -k all
-              elif command -v plymouth-set-default-theme >/dev/null 2>&1; then
                 plymouth-set-default-theme --rebuild-initrd pix
               else
-                echo "ERROR: Unable to rebuild initramfs for Plymouth" >&2
+                echo "ERROR: plymouth-set-default-theme not found" >&2
                 exit 1
               fi
 
