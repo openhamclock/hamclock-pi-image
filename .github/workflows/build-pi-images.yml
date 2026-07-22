@@ -355,7 +355,7 @@ jobs:
           set -e
           DATE=$(date +%Y-%m-%d)
           SRC="${{ steps.build.outputs.image }}"
-          OUT="hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-${{ matrix.arch }}-${DATE}.img"
+          OUT="hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-${{ matrix.arch }}-${{ github.event.inputs.hamclock_size || '800x480' }}-${DATE}.img"
           mv "$SRC" "$OUT"
           xz -T0 -6 -v "$OUT"
           sha256sum "${OUT}.xz" > "${OUT}.xz.sha256"
@@ -365,7 +365,7 @@ jobs:
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-${{ matrix.arch }}
+          name: hamclock-raspios-${{ matrix.codename }}-${{ matrix.variant }}-${{ matrix.arch }}-${{ github.event.inputs.hamclock_size || '800x480' }}
           path: |
             ${{ env.IMAGE_XZ }}
             ${{ env.IMAGE_SHA }}
