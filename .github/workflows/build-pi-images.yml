@@ -297,24 +297,39 @@ jobs:
             # A recognizable hotspot name instead of the default "comitup-1234".
             echo "ap_name: HamClock-Setup" >> /etc/comitup.conf
 
-            # HamClock (web and fb0 variants) can start before the network
-            # is actually up -- neither systemd unit waits for real
-            # connectivity, just for the network stack to exist. That race
-            # can happen during first-time setup via the hotspot, or on any
-            # ordinary reboot. Have Comitup restart the service once the
-            # device is genuinely CONNECTED, so it's never stuck
-            # serving/rendering a dead/pre-network session.
-            if [ "${{ matrix.variant }}" = "web" ] || [ "${{ matrix.variant }}" = "fb0" ]; then
-              echo "external_callback: /usr/local/bin/comitup-callback" >> /etc/comitup.conf
+            # HamClock can start before the network is actually up, in any
+            # variant -- web/fb0 launch via systemd units that don't wait
+            # for real connectivity, and the desktop variant's autostart
+            # only waits up to 60s before giving up and launching anyway.
+            # That race can happen during first-time setup via the hotspot,
+            # or on any ordinary reboot. Have Comitup restart/relaunch
+            # HamClock once the device is genuinely CONNECTED, so it's
+            # never stuck serving/rendering a dead/pre-network session.
+            echo "external_callback: /usr/local/bin/comitup-callback" >> /etc/comitup.conf
+            if [ "${{ matrix.variant }}" = "hardware" ]; then
+              # No systemd service to restart here -- HamClock runs inside
+              # the pi user's X11 session. Kill it and relaunch it in that
+              # same session (assumes the single auto-login "pi" account
+              # this whole pipeline is built around, on display :0, per
+              # Imager's auto-login setting described in the README).
+              cat > /usr/local/bin/comitup-callback <<'EOF'
+            #!/usr/bin/env bash
+            if [ "$1" = "CONNECTED" ]; then
+                pkill -x hamclock 2>/dev/null || true
+                sleep 1
+                su - pi -c "DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority /usr/local/bin/hamclock -f on" >/dev/null 2>&1 &
+            fi
+            EOF
+            else
               cat > /usr/local/bin/comitup-callback <<'EOF'
             #!/usr/bin/env bash
             if [ "$1" = "CONNECTED" ]; then
                 systemctl restart hamclock.service 2>/dev/null || true
             fi
             EOF
-              chmod 755 /usr/local/bin/comitup-callback
-              chown root:root /usr/local/bin/comitup-callback
             fi
+            chmod 755 /usr/local/bin/comitup-callback
+            chown root:root /usr/local/bin/comitup-callback
 
             # Enable SSH by default so the device is reachable once it's on
             # a real network.
@@ -326,10 +341,19 @@ jobs:
             set -e
 
             # Replace the standard "Welcome to Raspberry Pi Desktop" Plymouth
-            # image after every package and HamClock installation step. The
-            # splash is embedded in the initramfs on Bookworm/Trixie, and a
-            # later package operation can otherwise rebuild the initramfs with
-            # the stock Raspberry Pi image again.
+            # image. The splash is embedded in the initramfs on
+            # Bookworm/Trixie, so overwriting the file alone does nothing
+            # until the initramfs is rebuilt.
+            #
+            # NOTE: deliberately rebuilding only what Plymouth itself needs
+            # (plymouth-set-default-theme --rebuild-initrd), not a full
+            # `update-initramfs -u -k all`. The broader rebuild also re-runs
+            # hardware/module autodetection, which is unreliable inside this
+            # cross-architecture QEMU chroot (it has no relationship to the
+            # real Pi's actual GPU/display hardware) -- that mismatch caused
+            # the graphical desktop to fail and fall back to its openbox
+            # safety-net session on real boot. Confirmed by reverting this
+            # exact change.
             if [ "${{ matrix.variant }}" = "hardware" ]; then
               OHB_SPLASH=/home/hamclock-build/assets/ohb-splash.png
               PLYMOUTH_SPLASH=/usr/share/plymouth/themes/pix/splash.png
@@ -341,16 +365,6 @@ jobs:
 
               install -D -m 0644 "$OHB_SPLASH" "$PLYMOUTH_SPLASH"
 
-              # Rebuild only what Plymouth itself needs, not a full
-              # multi-kernel initramfs regeneration. update-initramfs -u -k
-              # all also re-runs hardware/module autodetection, which is
-              # unreliable inside a cross-architecture QEMU chroot on a
-              # GitHub Actions runner (it has no relationship to the real
-              # Pi's actual GPU/display hardware) -- that mismatch is a
-              # likely cause of the graphical desktop failing to start and
-              # falling back to its openbox safety-net session on real
-              # boot, while this narrower rebuild avoids touching anything
-              # outside Plymouth's own theme data.
               if command -v plymouth-set-default-theme >/dev/null 2>&1; then
                 plymouth-set-default-theme --rebuild-initrd pix
               else
@@ -390,7 +404,7 @@ jobs:
           path: |
             ${{ env.IMAGE_XZ }}
             ${{ env.IMAGE_SHA }}
-          retention-days: 14
+          retention-days: 3
 
   publish:
     name: Publish release
