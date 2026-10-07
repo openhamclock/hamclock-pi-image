@@ -12,11 +12,12 @@ on:
         required: false
         default: 'latest'
       hamclock_size:
-        description: 'HamClock build size'
+        description: 'HamClock build size ("all" builds every supported size for every variant)'
         required: false
-        default: '800x480'
+        default: 'all'
         type: choice
         options:
+          - all
           - 800x480
           - 1600x960
           - 2400x1440
@@ -46,16 +47,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Works out which HamClock sizes to build. "all" (the default, and what
+  # non-manual triggers get) expands to every size the HamClock Makefile
+  # supports; picking one size builds just that one.
+  prepare:
+    name: Select sizes
+    runs-on: ubuntu-latest
+    outputs:
+      sizes: ${{ steps.sizes.outputs.sizes }}
+    steps:
+      - name: Compute size list
+        id: sizes
+        run: |
+          SIZE="${{ github.event.inputs.hamclock_size || 'all' }}"
+          if [ "$SIZE" = "all" ]; then
+            echo 'sizes=["800x480","1600x960","2400x1440","3200x1920"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "sizes=[\"$SIZE\"]" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
-    name: Build ${{ matrix.name }}
+    name: Build ${{ matrix.target }} ${{ matrix.size }}
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
       fail-fast: false
+      # Every variant below is built at every selected size (6 x 4 = 24
+      # images for "all"). GitHub runs at most ~20 jobs at once on free
+      # plans; the rest simply queue.
       matrix:
+        size: ${{ fromJSON(needs.prepare.outputs.sizes) }}
+        target:
+          - trixie-web-64bit
+          - trixie-desktop-64bit
+          - trixie-fb0-32bit
+          - bookworm-web-64bit
+          - bookworm-desktop-64bit
+          - bookworm-fb0-32bit
+        # Per-target settings. Each entry matches an existing `target`
+        # value, so its keys are attached to that target at every size.
         include:
           # ----- Current Raspberry Pi OS release (Trixie) -----
-          - name: trixie-web-64bit
+          - target: trixie-web-64bit
             codename: trixie
             variant: web
             display_variant: web
@@ -65,7 +99,7 @@ jobs:
             build_mode: web
             image_additional_mb: 2048
 
-          - name: trixie-desktop-64bit
+          - target: trixie-desktop-64bit
             codename: trixie
             variant: hardware
             display_variant: desktop
@@ -75,7 +109,7 @@ jobs:
             build_mode: hardware
             image_additional_mb: 3072
 
-          - name: trixie-fb0-32bit
+          - target: trixie-fb0-32bit
             codename: trixie
             variant: fb0
             display_variant: fb0
@@ -93,7 +127,7 @@ jobs:
           #   https://downloads.raspberrypi.com/raspios_lite_arm64/images/
           #   https://downloads.raspberrypi.com/raspios_arm64/images/
           #   https://downloads.raspberrypi.com/raspios_lite_armhf/images/
-          - name: bookworm-web-64bit
+          - target: bookworm-web-64bit
             codename: bookworm
             variant: web
             display_variant: web
@@ -102,7 +136,7 @@ jobs:
             build_mode: web
             image_additional_mb: 2048
 
-          - name: bookworm-desktop-64bit
+          - target: bookworm-desktop-64bit
             codename: bookworm
             variant: hardware
             display_variant: desktop
@@ -111,7 +145,7 @@ jobs:
             build_mode: hardware
             image_additional_mb: 3072
 
-          - name: bookworm-fb0-32bit
+          - target: bookworm-fb0-32bit
             codename: bookworm
             variant: fb0
             display_variant: fb0
@@ -130,7 +164,7 @@ jobs:
           sudo docker image prune --all --force || true
           df -h /
 
-      - name: Build ${{ matrix.name }} image with HamClock
+      - name: Build ${{ matrix.target }} ${{ matrix.size }} image with HamClock
         id: build
         uses: pguyot/arm-runner-action@v2
         with:
@@ -144,7 +178,7 @@ jobs:
             export HC_NONINTERACTIVE=1
             export HC_ALLOW_SUDO=1
             export HC_BUILD_MODE="${{ matrix.build_mode }}"
-            export HC_SIZE="${{ github.event.inputs.hamclock_size || '800x480' }}"
+            export HC_SIZE="${{ matrix.size }}"
             export HC_AUTOSTART="${{ github.event.inputs.autostart || 'y' }}"
 
             chmod +x debian/install-hc-rpi
@@ -245,7 +279,7 @@ jobs:
               # wouldn't self-heal for an existing one.
               cat > /etc/X11/Xsession.d/99-hamclock-xrandr <<'XSESSEOF'
               #!/bin/sh
-              xrandr --output HDMI-1 --scale-from ${{ github.event.inputs.hamclock_size || '800x480' }} --display :0 2>/dev/null || true
+              xrandr --output HDMI-1 --scale-from ${{ matrix.size }} --display :0 2>/dev/null || true
             XSESSEOF
               chmod 755 /etc/X11/Xsession.d/99-hamclock-xrandr
             fi
@@ -400,7 +434,7 @@ jobs:
           set -e
           DATE=$(date +%Y-%m-%d)
           VERSION="${{ github.event.inputs.hamclock_release_label || 'latest' }}"
-          SIZE="${{ github.event.inputs.hamclock_size || '800x480' }}"
+          SIZE="${{ matrix.size }}"
 
           # fb0 is always 32-bit in this pipeline, so the arch segment is
           # redundant there; web/desktop keep it since arch is meaningful

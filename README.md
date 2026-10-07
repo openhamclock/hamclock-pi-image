@@ -117,11 +117,11 @@ Go to **Actions → Build HamClock Raspberry Pi images → Run workflow**. Optio
 | Input | What it does | Default |
 |---|---|---|
 | `hamclock_version` | Pin a specific HamClock release (e.g. `4.22`) | blank = latest |
-| `hamclock_size` | Build size: `800x480`, `1600x960`, `2400x1440`, or `3200x1920` | `800x480` |
+| `hamclock_size` | Build size: `all`, `800x480`, `1600x960`, `2400x1440`, or `3200x1920`. `all` builds every size for every variant | `all` |
 | `autostart` | Whether HamClock starts automatically on boot | `y` |
 | `publish_release` | Attach the built images to a GitHub Release instead of just a temporary workflow artifact | off |
 
-All six images build in parallel from the same run. Build time is roughly 30–90 minutes per image (compiling C++ inside an emulated ARM environment isn't fast).
+With `hamclock_size` set to `all` (the default), each of the six variants is built at all four sizes — 24 images from one run. Pick a single size to get just six. Jobs run in parallel, but GitHub limits concurrent jobs (about 20 on free plans), so some will queue. Build time is roughly 30–90 minutes per image (compiling C++ inside an emulated ARM environment isn't fast). Image filenames include the size, e.g. `hamclock-trixie-web-arm64-1600x960-...`.
 
 **Downloading what you built:** Actions tab → your run → scroll to **Artifacts**. Files are `.img.xz` (flash directly, no need to decompress) plus a `.sha256` checksum.
 
