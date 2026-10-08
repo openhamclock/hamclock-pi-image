@@ -55,6 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sizes: ${{ steps.sizes.outputs.sizes }}
+      release_tag: ${{ steps.release.outputs.tag }}
     steps:
       - name: Compute size list
         id: sizes
@@ -64,6 +65,26 @@ jobs:
             echo 'sizes=["800x480","1600x960","2400x1440","3200x1920"]' >> "$GITHUB_OUTPUT"
           else
             echo "sizes=[\"$SIZE\"]" >> "$GITHUB_OUTPUT"
+          fi
+
+      # When publishing, create the release up front as a DRAFT. Each build
+      # job uploads its own image straight to it (see "Upload to release"
+      # below), and the final `publish` job flips it public once every
+      # build has succeeded. Idempotent so re-running a job is safe.
+      - name: Create draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="hamclock-images-$(date -u +%Y-%m-%d)-${{ github.run_number }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event.inputs.publish_release }}" = "true" ]; then
+            if ! gh release view "$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" --draft --target "$GITHUB_SHA" \
+                --title "HamClock Pi images v${{ github.event.inputs.hamclock_release_label || 'latest' }} ($TAG)" \
+                --notes "Raspberry Pi images for HamClock. Verify downloads against the matching .sha256 file. Any image split into .partNN pieces (GitHub caps release files at 2 GiB) must be joined first: cat NAME.img.xz.part* > NAME.img.xz"
+            fi
           fi
 
   build:
@@ -462,28 +483,44 @@ jobs:
             ${{ env.IMAGE_SHA }}
           retention-days: 3
 
+      # Upload this job's image directly to the release, one file at a
+      # time. (Previously a single job downloaded all images and pushed
+      # them in parallel, which died partway through with no error.)
+      # GitHub rejects release assets over 2 GiB, so a larger image is
+      # split into parts; the .sha256 always covers the whole .img.xz.
+      - name: Upload to release
+        if: ${{ github.event.inputs.publish_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: |
+          set -e
+          FILES=("$IMAGE_SHA")
+          if [ "$(stat -c %s "$IMAGE_XZ")" -gt 2000000000 ]; then
+            split -b 1900M -d "$IMAGE_XZ" "${IMAGE_XZ}.part"
+            FILES+=("${IMAGE_XZ}".part*)
+          else
+            FILES+=("$IMAGE_XZ")
+          fi
+          for f in "${FILES[@]}"; do
+            for attempt in 1 2 3; do
+              gh release upload "$TAG" "$f" --clobber && break
+              [ "$attempt" = 3 ] && exit 1
+              sleep 15
+            done
+          done
+
   publish:
     name: Publish release
-    needs: build
+    needs: [prepare, build]
     if: ${{ github.event.inputs.publish_release == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Download all image artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          pattern: hamclock-*
-          merge-multiple: true
-
-      - name: Compute release tag
-        id: tag
-        run: echo "tag=hamclock-images-$(date +%Y-%m-%d)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: HamClock Pi images v${{ github.event.inputs.hamclock_release_label || 'latest' }} (${{ steps.tag.outputs.tag }})
-          files: artifacts/*
-          draft: false
-          prerelease: false
+      # Only runs if every build succeeded; otherwise the release stays a
+      # draft so you can inspect it or re-run the failed jobs.
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "${{ needs.prepare.outputs.release_tag }}" --draft=false
