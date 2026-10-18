@@ -470,6 +470,22 @@ jobs:
           mv "$SRC" "${BASE}.img"
           xz -T0 -6 -v "${BASE}.img"
           sha256sum "${BASE}.img.xz" > "${BASE}.img.xz.sha256"
+          # Raspberry Pi Imager 2.0+ greys out customisation (hostname,
+          # WiFi, user, ...) for "Use custom" images; it only offers it for
+          # images listed in a manifest with an init_format. Ship that
+          # manifest next to the image. When publishing, its URL points at
+          # the release asset so Imager can load it directly; otherwise it
+          # holds a local file:// URI that the user regenerates with
+          # tools/make-imager-manifest.py (see README). Images over ~2 GiB
+          # are split into parts on release, so they get no URL manifest.
+          MANIFEST="${BASE}.rpi-imager-manifest"
+          URL_ARGS=()
+          if [ "${{ github.event.inputs.publish_release }}" = "true" ] && \
+             [ "$(stat -c %s "${BASE}.img.xz")" -le 2000000000 ]; then
+            URL_ARGS=(--url "https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.release_tag }}/${BASE}.img.xz")
+          fi
+          python3 tools/make-imager-manifest.py --offline "${URL_ARGS[@]}" -o "$MANIFEST" "${BASE}.img.xz"
+          echo "IMAGE_MANIFEST=${MANIFEST}" >> "$GITHUB_ENV"
           echo "IMAGE_XZ=${BASE}.img.xz" >> "$GITHUB_ENV"
           echo "IMAGE_SHA=${BASE}.img.xz.sha256" >> "$GITHUB_ENV"
           echo "IMAGE_BASE=${BASE}" >> "$GITHUB_ENV"
@@ -481,6 +497,7 @@ jobs:
           path: |
             ${{ env.IMAGE_XZ }}
             ${{ env.IMAGE_SHA }}
+            ${{ env.IMAGE_MANIFEST }}
           retention-days: 3
 
       # Upload this job's image directly to the release, one file at a
@@ -496,7 +513,7 @@ jobs:
           TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
           set -e
-          FILES=("$IMAGE_SHA")
+          FILES=("$IMAGE_SHA" "$IMAGE_MANIFEST")
           if [ "$(stat -c %s "$IMAGE_XZ")" -gt 2000000000 ]; then
             split -b 1900M -d "$IMAGE_XZ" "${IMAGE_XZ}.part"
             FILES+=("${IMAGE_XZ}".part*)

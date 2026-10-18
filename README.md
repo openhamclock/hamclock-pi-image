@@ -48,11 +48,28 @@ Every image comes in two OS generations — **Trixie** (current Raspberry Pi OS)
 2. **Choose Device** → your Pi model
 3. **Choose OS** → scroll to the bottom → **Use custom** → select the `.img.xz` file you downloaded (no need to unzip it further — Imager reads `.xz` directly)
 4. **Choose Storage** → your SD card
-5. Click **Next**, then **Edit Settings** when prompted:
+5. Click **Next**. On Imager 1.x you'll get **Edit Settings**; on **Imager 2.0+** the customisation step is greyed out for "Use custom" images — see [Customisation greyed out in Imager 2.0+](#customisation-greyed-out-in-imager-20) below for the fix.
    - Set a hostname, and your own username/password if you don't want to use the built-in `pi`/`pi`
    - Set your WiFi SSID/password and country (skip this if you'd rather use the on-device WiFi setup described below)
    - Enable SSH if you want remote access (it's already enabled by default in the image itself)
 6. Save, confirm, and let it write
+
+### Customisation greyed out in Imager 2.0+
+
+Imager 2.0 only offers customisation for images whose manifest entry declares an `init_format`; "Use custom" images have no entry, so the option is disabled. Each build now ships a matching `*.rpi-imager-manifest` file next to the image. **If you downloaded it from a Release**, just open it (double-click, or `rpi-imager --repo FILE`, or App Options → Content Repository → Edit → Use custom file), pick the HamClock image from the OS list (not "Use custom") and customise as usual. Imager downloads the image itself.
+
+If there's no manifest, the image was split into parts (>2 GiB), or you grabbed it from an Actions artifact, generate one locally:
+
+1. Install Python 3 and download this repo (or just [`tools/make-imager-manifest.py`](tools/make-imager-manifest.py)).
+2. Put your downloaded `.img.xz` file(s) somewhere, then run:
+   ```
+   python3 tools/make-imager-manifest.py hamclock-*.img.xz
+   ```
+   This writes `hamclock.rpi-imager-manifest` (it hashes each image, so allow a minute or two). It picks `init_format` from the filename: **Bookworm → `systemd`**, **Trixie → `cloudinit-rpi`**.
+3. Load it in Imager: double-click the manifest file, or `rpi-imager --repo hamclock.rpi-imager-manifest`, or **App Options → Content Repository → Edit → Use custom file → Apply & Restart**.
+4. **Pick your HamClock image from the OS list** (not "Use custom") — the customisation step is now enabled.
+
+Don't want to do any of that? Skip customisation entirely: boot the image and use the `HamClock-Setup` hotspot for WiFi, or use Imager 1.9.x with a Bookworm image. The hostname can be changed afterwards with `sudo hostnamectl set-hostname NAME`.
 
 **Recommended card:** 32GB+ microSD, A1/A2 rated, from a reputable brand (SanDisk, Samsung, Kingston). Cheap/counterfeit cards are a common source of write failures — if Raspberry Pi Imager reports a "media error" partway through, try a different card before assuming the image itself is bad.
 
